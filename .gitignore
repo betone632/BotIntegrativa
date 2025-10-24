@@ -6,6 +6,7 @@ env/.env.local
 .notification.localstore.json
 .notification.playgroundstore.json
 appPackage/build
+package-lock.json
 
 # dependencies
 node_modules/

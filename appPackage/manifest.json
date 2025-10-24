@@ -34,17 +34,29 @@
             "isNotificationOnly": false,
             "commandLists": [
                 {
-                  "scopes": ["personal", "team", "groupChat"],
-                  "commands": [
-                      {
-                          "title": "Hi",
-                          "description": "Say hi to the bot."
-                      },
-                      {
-                          "title": "/reset",
-                          "description": "Delete conversation state."
-                      }
-                  ]
+                    "scopes": [
+                        "personal",
+                        "team",
+                        "groupChat"
+                    ],
+                    "commands": [
+                        {
+                            "title": "Hi",
+                            "description": "Say hi to the bot."
+                        },
+                        {
+                            "title": "/reset",
+                            "description": "Delete conversation state."
+                        },
+                        {
+                            "title": "/reuniões",
+                            "description": "Lista as as reuniões."
+                        },
+                        {
+                            "title": "/resumir reunião",
+                            "description": "Resume a reunião do chat atual."
+                        }
+                    ]
                 }
             ]
         }

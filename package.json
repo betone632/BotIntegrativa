@@ -21,8 +21,11 @@
     },
     "dependencies": {
         "@azure/identity": "^4.11.1",
+        "@microsoft/microsoft-graph-client": "^3.0.7",
         "@microsoft/teams.apps": "^2.0.0",
-        "@microsoft/teams.common": "^2.0.0"
+        "@microsoft/teams.common": "^2.0.0",
+        "botbuilder": "^4.23.3",
+        "dotenv": "^17.2.3"
     },
     "devDependencies": {
         "@types/node": "^20.0.0",
