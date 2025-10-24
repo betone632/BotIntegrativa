@@ -21,6 +21,7 @@
     },
     "dependencies": {
         "@azure/identity": "^4.11.1",
+        "@google/generative-ai": "^0.24.1",
         "@microsoft/microsoft-graph-client": "^3.0.7",
         "@microsoft/teams.apps": "^2.0.0",
         "@microsoft/teams.common": "^2.0.0",

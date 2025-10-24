@@ -2,6 +2,7 @@ import { stripMentionsText } from "@microsoft/teams.api";
 import { App  } from "@microsoft/teams.apps";
 import { LocalStorage } from "@microsoft/teams.common";
 import config from "./config";
+import sendMessage from "./AI/ai-response-generator";
 import { ManagedIdentityCredential, ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 
@@ -103,7 +104,6 @@ async function obterTranscricoesDoUsuario(graphClient: Client,userId: string , m
 
     const onlineMeeting = meeting.value[0];
     const graphMeetingId = onlineMeeting.id;
-    console.log(`Reunião encontrada com sucesso. ID: ${graphMeetingId}`);
 
     // --- PASSO 3 (NOVO): Buscar a transcrição da reunião ---
     const transcriptsResponse = await graphClient
@@ -117,16 +117,23 @@ async function obterTranscricoesDoUsuario(graphClient: Client,userId: string , m
 
     // Pega o ID da primeira transcrição encontrada
     const transcriptId = transcriptsResponse.value[0].id;
-    console.log(`Transcrição encontrada com sucesso. ID: ${transcriptId}`);
 
-    // --- PASSO 4 (NOVO): Obter o conteúdo da transcrição ---
-    // A resposta aqui não é um JSON, mas o conteúdo do arquivo (geralmente em formato VTT)
     const transcriptContent = await graphClient
-      .api(`/onlineMeetings/${graphMeetingId}/transcripts/${transcriptId}/content`)
+      .api(`/users/${userId}/onlineMeetings/${graphMeetingId}/transcripts/${transcriptId}/content?$format=text/vtt`)
       .get();
 
     // Retorna o conteúdo da transcrição para ser processado
-    return transcriptContent;
+    // 2. Verifique se a resposta é de fato um stream
+    if (transcriptContent.getReader) {
+      // 3. Use a função auxiliar para converter o stream em texto
+      const transcript= await streamToString(transcriptContent);
+
+      // 4. Agora você tem o conteúdo completo da transcrição em uma string!
+      return transcript;
+    }
+    else{
+      return `Não foi possível obter a transcrição como stream.`;
+    }
   } catch (error) {
     console.error("Erro ao obter as reuniões do usuário:", error);
     throw error;
@@ -172,11 +179,12 @@ app.on("message", async (context) => {
 
   if (text.toLocaleLowerCase().includes("/resumir reunião") || text.toLocaleLowerCase().includes("/resumir reuniao")) {
     try{
-        let a = context;
         const userId = context.activity.from.aadObjectId;
         const meetingId = context.activity.conversation.id;
-        const reunioes = await obterTranscricoesDoUsuario(graphClient, userId ,meetingId);
-        await context.send(`O resultado é` + reunioes);
+        await context.send(`Trabalhando para obter a transcrição da reunião... 📝`);
+        const transcript = await obterTranscricoesDoUsuario(graphClient, userId ,meetingId);
+        let iaResponse =await sendMessage(transcript);
+        await context.send(iaResponse);
 
     }catch(error){
       console.error("Erro ao processar o comando de obter resultados:", error);
@@ -222,4 +230,19 @@ app.on("message", async (context) => {
   await context.send(`[${state.count}] you said: ${text}`);
 });
 
+async function streamToString(stream) {
+  const reader = stream.getReader();
+  const textDecoder = new TextDecoder();
+  let result = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    result += textDecoder.decode(value);
+  }
+
+  return result;
+}
 export default app;
