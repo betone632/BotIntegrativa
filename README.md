@@ -1,71 +1,72 @@
-# Overview of the Basic Bot template
+# Visão Geral
 
-Examples of Microsoft Teams bots in everyday use include:
+O Planejador de Reuniões, carinhosamente chamado de Explicadinho é um bot desenvolvido para o Microsoft Teams que auxilia equipes a organizar, conduzir e resumir reuniões de forma automatizada e inteligente.
 
-- Bots that notify about build failures.
-- Bots that provide information about the weather or bus schedules.
-- Bots that provide travel information.
+Ele realiza todo o fluxo de uma reunião de forma integrada:
 
-A bot interaction can be a quick question and answer, or it can be a complex conversation. Being a cloud application, a bot can provide valuable and secure access to cloud services and corporate resources. 
-This app template is built on top of [Teams AI library V2](https://aka.ms/teams-ai-library-v2).
-## Get started with the Basic Bot template
+Planejamento da reunião – solicita o objetivo, os participantes e a pauta principal.
 
-> **Prerequisites**
+Acompanhamento – utiliza recursos do Teams Premium para capturar a transcrição automática da reunião.
+
+Análise com IA – após o término, o bot gera um resumo com os principais pontos discutidos, decisões e tarefas atribuídas.
+
+Importante: O uso deste bot requer Microsoft Teams Premium, pois depende dos recursos avançados de transcrição e inteligência artificial disponíveis apenas nessa versão.
+
+Esta aplicação foi construída com base na Teams AI Library V2, aproveitando o poder da nuvem para oferecer interações seguras e contextuais com os usuários.
+
+## Como usar
+
+> **Requisitos**
 >
-> To run the Basic Bot template in your local dev machine, you will need:
+> Para executar o projeto do Planejador de Reuniões localmente, é necessário ter instalado:
 >
 > - [Node.js](https://nodejs.org/), supported versions: 20, 22
-> - [Microsoft 365 Agents Toolkit Visual Studio Code Extension](https://aka.ms/teams-toolkit) version 5.0.0 and higher or [Microsoft 365 Agents Toolkit CLI](https://aka.ms/teamsfx-toolkit-cli)
+> - [Microsoft 365 Agents Toolkit Visual Studio Code Extension](https://aka.ms/teams-toolkit) versão 5.0.0 ou superior ou [Microsoft 365 Agents Toolkit CLI](https://aka.ms/teamsfx-toolkit-cli)
 
-> For local debugging using Microsoft 365 Agents Toolkit CLI, you need to do some extra steps described in [Set up your Microsoft 365 Agents Toolkit CLI for local debugging](https://aka.ms/teamsfx-cli-debugging).
+> Para depuração local com a CLI, siga as instruções em [Set up your Microsoft 365 Agents Toolkit CLI for local debugging](https://aka.ms/teamsfx-cli-debugging).
 
-1. First, select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
-2. Press F5 to start debugging which launches your app in Microsoft 365 Agents Playground using a web browser. Select `Debug in Microsoft 365 Agents Playground`.
-3. The browser will pop up to open Microsoft 365 Agents Playground.
-4. You will receive a welcome message from the bot, and you can send anything to the bot to get an echoed response.
+Execução Local:
 
-**Congratulations**! You are running an application that can now interact with users in Microsoft 365 Agents Playground:
+1. No VS Code, selecione o ícone Microsoft 365 Agents Toolkit na barra lateral.
+2. Pressione F5 para iniciar a depuração.
+3. O aplicativo será aberto automaticamente no Microsoft 365 Agents Playground, mas você pode selecionar diretamente o Teams (web ou desktop)
+4. O bot enviará uma mensagem de boas-vindas. Envie qualquer mensagem para iniciar uma interação.
 
-![basic bot](./img/echo-bot.png)
+**Parabéns**! Após esses passos, o bot estará em execução e poderá interagir com usuários dentro do Microsoft 365 Agents Playground.
 
+**Funcionalidades do Explicadinho:**
 
-## What's included in the template
+Agendamento inteligente: coleta o objetivo, participantes e pauta da reunião.
 
-| Folder       | Contents                                            |
-| - | - |
-| `.vscode`    | VSCode files for debugging                          |
-| `appPackage` | Templates for the application manifest        |
-| `env`        | Environment files                                   |
-| `infra`      | Templates for provisioning Azure resources          |
+Integração com Teams Premium: utiliza transcrição automática e recursos de IA do Teams.
 
-The following files can be customized and demonstrate an example implementation to get you started.
+Resumo com IA: gera automaticamente um resumo com os principais pontos, decisões e responsáveis.
 
-| File                                 | Contents                                           |
-| - | - |
-|`app.ts`| Handles business logics for the echo bot.|
-|`index.ts`|`index.ts` is used to setup and configure the echo bot.|
+Envio pós-reunião: pode enviar o resumo por chat do Teams ou e-mail corporativo.
 
-The following are Microsoft 365 Agents Toolkit specific project files. You can [visit a complete guide on Github](https://github.com/OfficeDev/TeamsFx/wiki/Teams-Toolkit-Visual-Studio-Code-v5-Guide#overview) to understand how Microsoft 365 Agents Toolkit works.
+Segurança e conformidade: utiliza autenticação Microsoft e segue as políticas de segurança do Microsoft 365.
 
-| File                                 | Contents                                           |
-| - | - |
-|`m365agents.yml`|This is the main Microsoft 365 Agents Toolkit project file. The project file defines two primary things:  Properties and configuration Stage definitions. |
-|`m365agents.local.yml`|This overrides `m365agents.yml` with actions that enable local execution and debugging.|
-|`m365agents.playground.yml`| This overrides `m365agents.yml` with actions that enable local execution and debugging in Microsoft 365 Agents Playground.|
+**Implantação**
 
-## Extend the Basic Bot template
+Para implantar o bot em ambiente corporativo:
 
-Following documentation will help you to extend the Basic Bot template.
+1. Provisionar recursos no Azure (App Service e Bot Service).
+2. Configurar as variáveis de ambiente no arquivo .env.
+3. Realizar o deploy com o Microsoft 365 Agents Toolkit ou via pipeline CI/CD (Azure DevOps).
+4. Importar o pacote .zip gerado para o Admin Center do Microsoft Teams.
 
-- [Add or manage the environment](https://learn.microsoft.com/microsoftteams/platform/toolkit/teamsfx-multi-env)
-- [Create multi-capability app](https://learn.microsoft.com/microsoftteams/platform/toolkit/add-capability)
-- [Add single sign on to your app](https://learn.microsoft.com/microsoftteams/platform/toolkit/add-single-sign-on)
-- [Access data in Microsoft Graph](https://learn.microsoft.com/microsoftteams/platform/toolkit/teamsfx-sdk#microsoft-graph-scenarios)
-- [Use an existing Microsoft Entra application](https://learn.microsoft.com/microsoftteams/platform/toolkit/use-existing-aad-app)
-- [Customize the app manifest](https://learn.microsoft.com/microsoftteams/platform/toolkit/teamsfx-preview-and-customize-app-manifest)
-- Host your app in Azure by [provision cloud resources](https://learn.microsoft.com/microsoftteams/platform/toolkit/provision) and [deploy the code to cloud](https://learn.microsoft.com/microsoftteams/platform/toolkit/deploy)
-- [Collaborate on app development](https://learn.microsoft.com/microsoftteams/platform/toolkit/teamsfx-collaboration)
-- [Set up the CI/CD pipeline](https://learn.microsoft.com/microsoftteams/platform/toolkit/use-cicd-template)
-- [Publish the app to your organization or the Microsoft app store](https://learn.microsoft.com/microsoftteams/platform/toolkit/publish)
-- [Develop with Microsoft 365 Agents Toolkit CLI](https://aka.ms/teams-toolkit-cli/debug)
-- [Preview the app on mobile clients](https://aka.ms/teamsfx-mobile)
+**Observações Importantes**
+
+1. O bot requer Teams Premium para utilizar transcrição e recursos de IA.
+2. Certifique-se de que a transcrição da reunião esteja ativada para todos os participantes.
+3. O resumo com IA depende da API de transcrição do Microsoft Graph.
+
+Todos os dados são processados conforme as políticas de segurança e privacidade da Microsoft.
+
+**Licença**
+
+Este projeto está licenciado sob a Licença MIT.
+O código pode ser modificado, redistribuído e adaptado conforme as políticas da sua organização.
+-----------------------------------------------------------------------------------------------
+Desenvolvido pela Equipe 11 - Integrativa Sistemas de Informação UNIPLAC 2025/2
+-----------------------------------------------------------------------------------------------
