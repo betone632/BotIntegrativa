@@ -4,18 +4,18 @@
     "version": "1.0.0",
     "id": "${{TEAMS_APP_ID}}",
     "developer": {
-        "name": "My App, Inc.",
+        "name": "Explicadinho, Inc.",
         "websiteUrl": "https://www.example.com",
         "privacyUrl": "https://www.example.com/privacy",
         "termsOfUseUrl": "https://www.example.com/termofuse"
     },
     "icons": {
-        "color": "color.png",
-        "outline": "outline.png"
+        "color": "ColorIcon.png",
+        "outline": "Outline.png"
     },
     "name": {
-        "short": "BotIntegrativa${{APP_NAME_SUFFIX}}",
-        "full": "full name for BotIntegrativa"
+        "short": "Explicadinho${{APP_NAME_SUFFIX}}",
+        "full": "Teams Explicadinho extension"
     },
     "description": {
         "short": "short description for BotIntegrativa",

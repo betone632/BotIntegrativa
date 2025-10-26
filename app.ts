@@ -1,10 +1,11 @@
-import { stripMentionsText } from "@microsoft/teams.api";
-import { App  } from "@microsoft/teams.apps";
+import { ActivityLike, stripMentionsText } from "@microsoft/teams.api";
+import { App } from "@microsoft/teams.apps";
 import { LocalStorage } from "@microsoft/teams.common";
 import config from "./config";
 import sendMessage from "./AI/ai-response-generator";
 import { ManagedIdentityCredential, ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
+const { CardFactory } = require('botbuilder');
 
 // Importe e configure o dotenv no início do seu arquivo
 import * as dotenv from "dotenv";
@@ -66,7 +67,7 @@ const getConversationState = (conversationId: string): ConversationState => {
   return state;
 };
 
-// --- FUNÇÃO PARA OBTER REUNIÕES VIA GRAPH API (Sem alterações na lógica interna) ---
+
 async function obterReunioesDoUsuario(graphClient: Client, userId: string) {
   try {
     const dataInicio = new Date().toISOString();
@@ -79,6 +80,7 @@ async function obterReunioesDoUsuario(graphClient: Client, userId: string) {
       .select("subject,organizer,start,end,location")
       .filter(`start/dateTime ge '${dataInicio}' and end/dateTime le '${dataFimISO}'`)
       .orderby("start/dateTime ASC")
+      .top(10)
       .get();
 
     return eventos.value;
@@ -88,7 +90,70 @@ async function obterReunioesDoUsuario(graphClient: Client, userId: string) {
   }
 }
 
-async function obterTranscricoesDoUsuario(graphClient: Client,userId: string , meetingId: string) {
+async function atualizarReuniao(graphClient: Client, userId: string, meetingId: string, content: string) {
+  try {
+
+    const updatedData = {
+      body: {
+        contentType: "TEXT",
+        content: content
+      }
+    };
+
+    const eventos = await graphClient
+      .api(`/users/${userId}/events/${meetingId}`)
+      .patch(updatedData);
+
+    return eventos.value;
+  } catch (error) {
+    console.error("Erro ao obter as reuniões do usuário:", error);
+    throw error;
+  }
+}
+
+async function obterReuniao(graphClient: Client, userId: string, meetingId: string) {
+  try {
+    const data = new Date();
+    data.setDate(data.getDate() - 7);
+    const dataInicio = data.toISOString();
+    const dataFim = new Date();
+    dataFim.setDate(dataFim.getDate() + 7);
+    const dataFimISO = dataFim.toISOString();
+
+
+    const chats = await graphClient
+      .api(`/chats/${meetingId}`)
+      .select('onlineMeetingInfo')
+      .get();
+
+    const encodedJoinWebUrl = encodeURIComponent(chats.onlineMeetingInfo.joinWebUrl);
+
+    const meeting = await graphClient
+      .api(`/users/${userId}/onlineMeetings?$filter=JoinWebUrl eq '${encodedJoinWebUrl}'`)
+      .get();
+
+    if (!meeting.value || meeting.value.length === 0) {
+      throw new Error("Reunião não encontrada.");
+    }
+
+    const eventos = await graphClient
+      .api(`/users/${userId}/events`)
+      .filter(`start/dateTime ge '${dataInicio}' and end/dateTime le '${dataFimISO}'`)
+      .get();
+
+    const evento = eventos.value.find((evento: any) => evento.onlineMeeting?.joinUrl === meeting.value[0].joinUrl);
+    if (!evento) {
+      throw new Error("Evento não encontrado.");
+    }
+
+    return evento;
+  } catch (error) {
+    console.error("Erro ao obter as reuniões do usuário:", error);
+    throw error;
+  }
+}
+
+async function obterTranscricoesDoUsuario(graphClient: Client, userId: string, meetingId: string) {
   try {
 
     const chats = await graphClient
@@ -126,12 +191,12 @@ async function obterTranscricoesDoUsuario(graphClient: Client,userId: string , m
     // 2. Verifique se a resposta é de fato um stream
     if (transcriptContent.getReader) {
       // 3. Use a função auxiliar para converter o stream em texto
-      const transcript= await streamToString(transcriptContent);
+      const transcript = await streamToString(transcriptContent);
 
       // 4. Agora você tem o conteúdo completo da transcrição em uma string!
       return transcript;
     }
-    else{
+    else {
       return `Não foi possível obter a transcrição como stream.`;
     }
   } catch (error) {
@@ -143,23 +208,130 @@ async function obterTranscricoesDoUsuario(graphClient: Client,userId: string , m
 app.on("message", async (context) => {
   const activity = context.activity;
   const text: string = stripMentionsText(activity);
-  
-  if (text.toLocaleLowerCase().includes("/reuniões") || text.toLocaleLowerCase().includes("/reunioes")) {
+  const userId = context.activity.from.aadObjectId;
+
+  if (context.activity.value && context.activity.value.selectedMeeting) {
+    const selectedMeetingId = context.activity.value.selectedMeeting;
+
+    // Cria um Cartão Adaptável que funciona como um formulário
+    const formCard = CardFactory.adaptiveCard({
+      "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+      "version": "1.3",
+      "type": "AdaptiveCard",
+      "body": [
+        {
+          "type": "Input.Text",
+          "label": "Qual o objetivo da reunião?",
+          "id": "assuntoPrincipal",
+          "placeholder": "Essa reunião tem como objetivo...",
+          "isMultiline": true
+        },
+        {
+          "type": "Input.Text",
+          "id": "participantes",
+          "label": "Quais participantes devem definir algo?",
+          "placeholder": "Fulano deve decidir sobre...",
+          "isMultiline": true
+        },
+        {
+          "type": "Input.Text",
+          "id": "definicao",
+          "label": "Qual a definição que essa reunião deve ter?",
+          "placeholder": "Digite a pauta ou descrição aqui...",
+          "isMultiline": true
+        }
+      ],
+      "actions": [
+        {
+          "type": "Action.Submit",
+          "title": "Atualizar Reunião",
+          // Passamos dados ocultos para saber qual reunião atualizar
+          "data": {
+            "action": "updateMeetingDetails",
+            "meetingId": selectedMeetingId
+          }
+        }
+      ]
+    });
+
+    // Envia o formulário para o usuário
+    let card: ActivityLike = { type: "message", attachments: [formCard] };
+    await context.send(card);
+    return;
+  }
+
+  if (context.activity.value && context.activity.value.action === 'updateMeetingDetails') {
+    const meetingId = context.activity.value.meetingId;
+    const novoAssunto = context.activity.value.assuntoPrincipal;
+    const novosParticipantesStr = context.activity.value.participantes;
+    const novaDefinicao = context.activity.value.definicao;
+
+    const assuntoReuniao = `Assunto: ${novoAssunto}\r\nParticipantes: ${novosParticipantesStr}\r\nDefinição: ${novaDefinicao}`;
+
     try {
-      const userId = context.activity.from.aadObjectId;
+      if (novaDefinicao != undefined) {
+        await context.send("Atualizando sua reunião, um momento... ⚙️");
+
+        await atualizarReuniao(graphClient, userId, meetingId, assuntoReuniao);
+
+        await context.send(`A reunião foi atualizada com sucesso! ✅`);
+      } else {
+        await context.send("Nenhuma alteração foi fornecida.");
+      }
+    } catch (error) {
+      console.error("Erro ao atualizar a reunião:", error);
+      await context.send("Ocorreu um erro ao tentar atualizar a reunião. Verifique o console para mais detalhes.");
+    }
+
+    return;
+  }
+
+  if (text.toLocaleLowerCase().includes("/planejar") || text.toLocaleLowerCase().includes("/planejar reunião") || text.toLocaleLowerCase().includes("/planejar reuniao")) {
+    try {
+
 
       if (userId) {
         await context.send("Verificando sua agenda... 🗓️");
         const reunioes = await obterReunioesDoUsuario(graphClient, userId);
 
         if (reunioes && reunioes.length > 0) {
-          let resposta = "Aqui estão suas próximas reuniões:\n\n";
-          reunioes.forEach((reuniao: any) => {
-            resposta += `- **${reuniao.subject}**\n`;
-            resposta += `  - Início: ${new Date(reuniao.start.dateTime).toLocaleString()}\n`;
-            resposta += `  - Fim: ${new Date(reuniao.end.dateTime).toLocaleString()}\n\n`;
+          // Mapeia as reuniões para o formato do ChoiceSet
+          const choices = reunioes.map((reuniao: any) => {
+            return {
+              title: `${reuniao.subject} (${new Date(reuniao.start.dateTime).toLocaleString()})`,
+              value: reuniao.id,
+            };
           });
-          await context.send(resposta);
+
+          // Cria o Cartão Adaptável
+          const adaptiveCard = CardFactory.adaptiveCard({
+            $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+            version: "1.3",
+            type: "AdaptiveCard",
+            body: [
+              {
+                type: "TextBlock",
+                text: "Selecione uma de suas próximas reuniões:",
+                weight: "bolder",
+                size: "medium",
+              },
+              {
+                type: "Input.ChoiceSet",
+                id: "selectedMeeting",
+                choices: choices,
+                placeholder: "Escolha uma reunião",
+              },
+            ],
+            actions: [
+              {
+                type: "Action.Submit",
+                title: "Planejar",
+              },
+            ],
+          });
+
+          let card: ActivityLike = { type: "message", attachments: [adaptiveCard] };
+          await context.send(card);
         } else {
           await context.send("Você não tem nenhuma reunião agendada para os próximos 7 dias.");
         }
@@ -169,33 +341,67 @@ app.on("message", async (context) => {
     } catch (error) {
       console.error("Erro ao processar o comando de reuniões:", error);
       if (error.statusCode === 403 || error.code === 'Authorization_RequestDenied') {
-          await context.send("Ocorreu um erro. Parece que não tenho permissão para acessar calendários. Verifique se a permissão 'Calendars.Read' (de aplicativo) foi concedida no Azure AD.");
+        await context.send("Ocorreu um erro. Parece que não tenho permissão para acessar calendários. Verifique se a permissão 'Calendars.Read' (de aplicativo) foi concedida no Azure AD.");
       } else {
-          await context.send("Ocorreu um erro ao buscar suas reuniões. Verifique o console para mais detalhes.");
+        await context.send("Ocorreu um erro ao buscar suas reuniões. Verifique o console para mais detalhes.");
       }
     }
     return;
   }
 
-  if (text.toLocaleLowerCase().includes("/resumir reunião") || text.toLocaleLowerCase().includes("/resumir reuniao")) {
-    try{
-        const userId = context.activity.from.aadObjectId;
-        const meetingId = context.activity.conversation.id;
-        await context.send(`Trabalhando para obter a transcrição da reunião... 📝`);
-        const transcript = await obterTranscricoesDoUsuario(graphClient, userId ,meetingId);
-        let iaResponse =await sendMessage(transcript);
-        await context.send(iaResponse);
+  if (text.toLocaleLowerCase().includes("/resumir") || text.toLocaleLowerCase().includes("/resumir reunião") || text.toLocaleLowerCase().includes("/resumir reuniao")) {
+    try {
+      const meetingId = context.activity.conversation.id;
+      await context.send(`Trabalhando para obter a transcrição da reunião... 📝`);
+      const transcript = await obterTranscricoesDoUsuario(graphClient, userId, meetingId);
+      const meeting = await obterReuniao(graphClient, userId, meetingId);
+      let iaResponse = await sendMessage(`transcrição: ${transcript} dados da reunião: ${meeting.bodyPreview}`);
+      await context.send(iaResponse);
 
-    }catch(error){
+    } catch (error) {
       console.error("Erro ao processar o comando de obter resultados:", error);
       await context.send("Ocorreu um erro ao obter os resultados. Verifique o console para mais detalhes.");
     }
     return;
   }
 
-  if (text === "/reset") {
-    storage.delete(activity.conversation.id);
-    await context.send("Ok I've deleted the current conversation state.");
+  if (text.toLocaleLowerCase().includes("/live-helper") || text.toLocaleLowerCase().includes("/live helper")) {
+    const meetingId = context.activity.conversation.id;
+    const meeting = await obterReuniao(graphClient, userId, meetingId);
+    const participantesAtuais = meeting.attendees || [];
+
+    const botJaExiste = participantesAtuais.some(
+      (p: any) => p.emailAddress.address === "b5517749-f96f-43df-ace7-7d5334bea7d5"
+    );
+
+    if (botJaExiste) {
+      console.log("O bot já está na lista de participantes.");
+      await context.send("O bot já estava convidado para esta reunião. ✅");
+      return;
+    }
+
+    // --- PASSO 2: MODIFICAR a lista de participantes ---
+    const novoParticipanteBot = {
+      emailAddress: {
+        address: "b5517749-f96f-43df-ace7-7d5334bea7d5",
+        name: "Bot de Resumo de Reuniões"
+      },
+      type: "required"
+    };
+    
+    const participantesAtualizados = [...participantesAtuais, novoParticipanteBot];
+
+    // --- PASSO 3: ESCREVER (PATCH) a lista atualizada ---
+    const updatePayload = {
+      attendees: participantesAtualizados
+    };
+    
+    await context.send("Convidando o bot para a reunião... 🤖");
+    await graphClient
+      .api(`/users/${userId}/events/${meeting.id}`)
+      .patch(updatePayload);
+      
+    await context.send("Bot adicionado com sucesso à reunião!");
     return;
   }
 
@@ -224,7 +430,7 @@ app.on("message", async (context) => {
     await context.send(JSON.stringify(runtime, null, 2));
     return;
   }
-  
+
   const state = getConversationState(activity.conversation.id);
   state.count++;
   await context.send(`[${state.count}] you said: ${text}`);
@@ -244,5 +450,34 @@ async function streamToString(stream) {
   }
 
   return result;
+}
+
+async function answerIncomingCall(graphClient: Client, callId: string) {
+    
+    // O endpoint público do seu Plano de Mídia, exposto via ngrok ou em produção
+    const mediaCallbackUri = "https://SEU_ENDPOINT_DE_MIDIA.com/api/media";
+
+    // O corpo da requisição para atender a chamada
+    const answerRequestBody = {
+        callbackUri: mediaCallbackUri,
+        acceptedModalities: ["audio"], // Informa que vamos lidar com áudio
+        mediaConfig: {
+            "@odata.type": "#microsoft.graph.appHostedMediaConfig",
+            "blob": "<Media session configuration blob>"
+        }
+    };
+
+    try {
+        // Envia o comando para a API do Graph
+        await graphClient
+            .api(`/communications/calls/${callId}/answer`)
+            .post(answerRequestBody);
+
+        console.log(`Chamada ${callId} atendida com sucesso!`);
+        // Agora, o stream de áudio será enviado para o seu mediaCallbackUri
+        
+    } catch (error) {
+        console.error("Erro ao atender a chamada:", error);
+    }
 }
 export default app;

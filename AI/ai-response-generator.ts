@@ -14,8 +14,11 @@ async function sendMessage(message: string) {
       return "não foi possível obter a transcrição da reunião.";
     }
 
-    let context = "voce é um expecialita em reunioes de trabalho. Resuma a seguinte transcrição de reuniao destacando os pontos principais e as decisoes tomadas, se não tiver nenhuma decisão tomada, apenas resuma os pontos principais e deixe claro que não foi";
-    const result = await model.generateContent(context + " transcription: " + message);
+    let context = "voce é um expecialita em reunioes de trabalho. Resuma a seguinte "+
+    "transcrição de reuniao destacando os pontos principais e as decisoes tomadas, se não tiver nenhuma decisão tomada,"
+    "apenas resuma os pontos principais e deixe claro que não foi"+
+    "foco nos pontos Assunto,Participantes e Definição, destaque oque foi falado na reuniao e vincule com esses pontos.";
+    const result = await model.generateContent(context + " transcription and summary: " + message);
     const response = await result.response;
     const text = response.text();
     return text;
