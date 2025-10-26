@@ -3,13 +3,13 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "resourceBaseName": {
-      "value": "bot${{RESOURCE_SUFFIX}}"
+      "value": "Explicadinho"
     },
     "webAppSKU": {
       "value": "B1"
     },
     "botDisplayName": {
-      "value": "BotIntegrativa"
+      "value": "Explicadinho"
     }
   }
 }
