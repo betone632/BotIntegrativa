@@ -14,12 +14,12 @@
         "outline": "Outline.png"
     },
     "name": {
-        "short": "Explicadinho${{APP_NAME_SUFFIX}}",
-        "full": "Teams Explicadinho extension"
+    "short": "Explicadinho${{APP_NAME_SUFFIX}}",
+    "full": "Explicadinho – Planejador de Reuniões com IA para Microsoft Teams"
     },
     "description": {
-        "short": "short description for Explicadinho",
-        "full": "full description for Explicadinho"
+    "short": "Organize e resuma reuniões automaticamente no Teams com IA.",
+    "full": "O Explicadinho é uma extensão para o Microsoft Teams que ajuda a planejar e otimizar reuniões. Ele coleta o objetivo, pauta e participantes antes do encontro, e após a reunião utiliza IA para analisar a transcrição e gerar um resumo com os principais pontos, decisões e tarefas. Requer Teams Premium para uso dos recursos avançados de transcrição e análise."
     },
     "accentColor": "#FFFFFF",
     "bots": [
@@ -41,20 +41,12 @@
                     ],
                     "commands": [
                         {
-                            "title": "Hi",
-                            "description": "Say hi to the bot."
+                            "title": "/planejar",
+                            "description": "Inicia o planejamento de uma nova reunião, solicitando objetivo, pauta e participantes."
                         },
                         {
-                            "title": "/reset",
-                            "description": "Delete conversation state."
-                        },
-                        {
-                            "title": "/reuniões",
-                            "description": "Lista as as reuniões."
-                        },
-                        {
-                            "title": "/resumir reunião",
-                            "description": "Resume a reunião do chat atual."
+                            "title": "/resumir",
+                            "description": "Gera um resumo com os principais pontos e decisões da reunião atual, usando IA."
                         }
                     ]
                 }
