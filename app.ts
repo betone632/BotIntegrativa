@@ -1,35 +1,48 @@
 import { ActivityLike, stripMentionsText } from "@microsoft/teams.api";
 import { App } from "@microsoft/teams.apps";
 import { LocalStorage } from "@microsoft/teams.common";
+import { CommunicationUserIdentifier, MicrosoftTeamsUserIdentifier, PhoneNumberIdentifier, CommunicationIdentifier } from '@azure/communication-common';
+import {
+  CallAutomationClient,
+  CallInvite,
+  StartRecordingOptions,
+  parseCallAutomationEvent,
+} from '@azure/communication-call-automation';
+
 import config from "./config";
+import createAcsIdentity from "./callIdBotgenerator";
 import sendMessage from "./AI/ai-response-generator";
 import { ManagedIdentityCredential, ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 const { CardFactory } = require('botbuilder');
 
 // Importe e configure o dotenv no início do seu arquivo
-import * as dotenv from "dotenv";
-// **** CORREÇÃO APLICADA AQUI ****
-// Diga ao dotenv para carregar o arquivo .env.local de dentro da pasta env
-dotenv.config({ path: "./env/.env.local" });
+
+if (process.env.NODE_ENV !== 'production' && !process.env.RUNNING_ON_AZURE) {
+  console.log("Carregando variáveis de ambiente do arquivo .env.local");
+  const dotenv = require("dotenv");
+  dotenv.config({ path: "./env/.env.local" });
+}
 
 // Create storage for conversation history
 const storage = new LocalStorage();
 
 // --- INÍCIO DA SEÇÃO DE AUTENTICAÇÃO ---
 const createAuthProvider = () => {
+  console.log(`${process.env.AZURE_CLIENT_ID}  ${process.env.AZURE_TENANT_ID}  ${process.env.AZURE_CLIENT_SECRET}`);
   const getAccessToken = async (): Promise<string> => {
     let credential;
-    // Esta condição agora vai funcionar, pois as variáveis de ambiente serão carregadas corretamente
     if (process.env.AZURE_CLIENT_ID && process.env.AZURE_TENANT_ID && process.env.AZURE_CLIENT_SECRET) {
-      // Ambiente de desenvolvimento local com segredo do cliente
       credential = new ClientSecretCredential(
-        process.env.AZURE_TENANT_ID,
-        process.env.AZURE_CLIENT_ID,
-        process.env.AZURE_CLIENT_SECRET
+        process.env.AZURE_TENANT_ID!,
+        process.env.AZURE_CLIENT_ID!,
+        process.env.AZURE_CLIENT_SECRET!
       );
     } else {
-      // Ambiente de produção (ex: Azure App Service) com Identidade Gerenciada
+      // É crucial que process.env.CLIENT_ID exista aqui para ManagedIdentityCredential
+      if (!process.env.CLIENT_ID) {
+        throw new Error("CLIENT_ID não está configurado para Managed Identity.");
+      }
       credential = new ManagedIdentityCredential({
         clientId: process.env.CLIENT_ID,
       });
@@ -53,9 +66,11 @@ const app = new App({
   storage,
 });
 
-// --- SEÇÃO DE ESTADO DA CONVERSA (Sem alterações) ---
+// --- SEÇÃO DE ESTADO DA CONVERSA ---
 interface ConversationState {
   count: number;
+  activeCallConnectionId?: string; // Para rastrear a conexão de chamada ativa
+  recordingId?: string; // Para rastrear o ID da gravação
 }
 
 const getConversationState = (conversationId: string): ConversationState => {
@@ -67,7 +82,6 @@ const getConversationState = (conversationId: string): ConversationState => {
   return state;
 };
 
-
 async function obterReunioesDoUsuario(graphClient: Client, userId: string) {
   try {
     const dataInicio = new Date().toISOString();
@@ -77,7 +91,7 @@ async function obterReunioesDoUsuario(graphClient: Client, userId: string) {
 
     const eventos = await graphClient
       .api(`/users/${userId}/events`)
-      .select("subject,organizer,start,end,location")
+      .select("subject,organizer,start,end,location,onlineMeeting")
       .filter(`start/dateTime ge '${dataInicio}' and end/dateTime le '${dataFimISO}'`)
       .orderby("start/dateTime ASC")
       .top(10)
@@ -92,7 +106,6 @@ async function obterReunioesDoUsuario(graphClient: Client, userId: string) {
 
 async function atualizarReuniao(graphClient: Client, userId: string, meetingId: string, content: string) {
   try {
-
     const updatedData = {
       body: {
         contentType: "TEXT",
@@ -155,7 +168,6 @@ async function obterReuniao(graphClient: Client, userId: string, meetingId: stri
 
 async function obterTranscricoesDoUsuario(graphClient: Client, userId: string, meetingId: string) {
   try {
-
     const chats = await graphClient
       .api(`/chats/${meetingId}`)
       .select('onlineMeetingInfo')
@@ -170,30 +182,22 @@ async function obterTranscricoesDoUsuario(graphClient: Client, userId: string, m
     const onlineMeeting = meeting.value[0];
     const graphMeetingId = onlineMeeting.id;
 
-    // --- PASSO 3 (NOVO): Buscar a transcrição da reunião ---
     const transcriptsResponse = await graphClient
       .api(`/users/${userId}/onlineMeetings/${graphMeetingId}/transcripts`)
       .get();
 
-    // Verifique se existe alguma transcrição associada à reunião
     if (!transcriptsResponse.value || transcriptsResponse.value.length === 0) {
       return `Reunião encontrada (ID: ${graphMeetingId}), mas não há transcrições disponíveis.`;
     }
 
-    // Pega o ID da primeira transcrição encontrada
     const transcriptId = transcriptsResponse.value[0].id;
 
     const transcriptContent = await graphClient
       .api(`/users/${userId}/onlineMeetings/${graphMeetingId}/transcripts/${transcriptId}/content?$format=text/vtt`)
       .get();
 
-    // Retorna o conteúdo da transcrição para ser processado
-    // 2. Verifique se a resposta é de fato um stream
     if (transcriptContent.getReader) {
-      // 3. Use a função auxiliar para converter o stream em texto
       const transcript = await streamToString(transcriptContent);
-
-      // 4. Agora você tem o conteúdo completo da transcrição em uma string!
       return transcript;
     }
     else {
@@ -204,16 +208,102 @@ async function obterTranscricoesDoUsuario(graphClient: Client, userId: string, m
     throw error;
   }
 }
-// --- MANIPULADOR DE MENSAGENS DO BOT ---
+
+const connectionString = process.env.COMMUNICATION_SERVICES_CONNECTION_STRING;
+if (!connectionString) {
+  console.error("COMMUNICATION_SERVICES_CONNECTION_STRING não está configurada.");
+  process.exit(1);
+}
+
+const callAutomationClient = new CallAutomationClient(connectionString);
+const callbackUrl = process.env.WEBHOOK_CALLBACK_HOST + "/api/messages";
+if (!process.env.WEBHOOK_CALLBACK_HOST) {
+  console.error("WEBHOOK_CALLBACK_HOST não está configurado. Isso é necessário para o Call Automation.");
+  process.exit(1);
+}
+
+app.http.post("api/messages", async (req, res) => {
+  try {
+    // CORREÇÃO: Chame parseCallAutomationEvent diretamente, não como método do cliente
+    const callAutomationEvents = parseCallAutomationEvent(req.body);
+
+    const events = Array.isArray(callAutomationEvents)
+      ? callAutomationEvents
+      : [callAutomationEvents];
+
+    for (const event of events) {
+      // processa normalmente
+      switch (event.type) {
+        case "CallConnected":
+          console.log(`Chamada conectada! ID da Conexão: ${event.callConnectionId}`);
+          // Você pode querer armazenar o callConnectionId no estado da conversa se precisar controlá-lo mais tarde
+          // Ou iniciar a gravação aqui
+          break;
+        case "ParticipantsUpdated":
+          console.log(`Participantes atualizados na chamada ${event.callConnectionId}`);
+          // Para acessar 'participants', o evento CallParticipantsUpdated pode ter uma estrutura ligeiramente diferente
+          // Ou o 'participants' pode estar em event.callConnectionProperties.participants.
+          // Verifique a estrutura exata do evento ParticipantsUpdated na documentação do SDK.
+          // Por enquanto, vamos assumir que event.participants funciona.
+          if (event.participants) { // Adicione uma verificação de existência
+            for (const participant of event.participants) {
+              console.log(` - ${getIdentifierKind(participant.identifier)}: ${getIdentifierValue(participant.identifier)}`);
+            }
+          }
+          break;
+        case "RecordingStateChanged":
+          console.log(`Estado da gravação mudou para ${event.recordingState} na chamada ${event.callConnectionId}`);
+          if (event.recordingState === "active") {
+            // Note: recordingId pode vir em uma propriedade diferente, como event.recording.recordingId
+            // A documentação do SDK é a melhor fonte aqui. Se event.recordingId não funcionar, ajuste.
+            console.log(`Gravação iniciada com ID: ${event.recordingId}`);
+            // Armazene o ID da gravação se precisar pará-la ou recuperá-la
+            // Você precisaria de um mecanismo para mapear isso de volta para a conversa do Teams.
+          } else if (event.recordingState === "inactive") {
+            console.log(`Gravação parada para o ID: ${event.recordingId}`);
+          }
+          break;
+        case "CallDisconnected":
+          console.log(`Chamada desconectada! ID da Conexão: ${event.callConnectionId}`);
+          // Limpe qualquer estado de chamada
+          break;
+        default:
+          console.log(`Evento de Call Automation não tratado: ${event.type}`);
+          break;
+      }
+    }
+    res.status(200).send();
+  } catch (error) {
+    console.error("Erro ao processar evento de callback do Call Automation:", error);
+    res.status(500).send("Erro interno do servidor");
+  }
+});
+
+function getIdentifierKind(identifier: CommunicationIdentifier): string {
+  if ('communicationUserId' in identifier && identifier.communicationUserId) return 'communicationUser';
+  if ('microsoftTeamsUserId' in identifier && identifier.microsoftTeamsUserId) return 'microsoftTeamsUser';
+  if ('phoneNumber' in identifier && identifier.phoneNumber) return 'phoneNumber';
+  if ('rawId' in identifier && identifier.rawId) return 'raw';
+  return 'unknown';
+}
+
+function getIdentifierValue(identifier: CommunicationIdentifier): string {
+  if ('communicationUserId' in identifier && identifier.communicationUserId) return identifier.communicationUserId;
+  if ('microsoftTeamsUserId' in identifier && identifier.microsoftTeamsUserId) return identifier.microsoftTeamsUserId;
+  if ('phoneNumber' in identifier && identifier.phoneNumber) return identifier.phoneNumber;
+  if ('rawId' in identifier && identifier.rawId) return identifier.rawId;
+  return 'N/A';
+}
+
 app.on("message", async (context) => {
   const activity = context.activity;
   const text: string = stripMentionsText(activity);
   const userId = context.activity.from.aadObjectId;
+  const conversationId = activity.conversation.id;
+  const state = getConversationState(conversationId);
 
   if (context.activity.value && context.activity.value.selectedMeeting) {
     const selectedMeetingId = context.activity.value.selectedMeeting;
-
-    // Cria um Cartão Adaptável que funciona como um formulário
     const formCard = CardFactory.adaptiveCard({
       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
       "version": "1.3",
@@ -245,7 +335,6 @@ app.on("message", async (context) => {
         {
           "type": "Action.Submit",
           "title": "Atualizar Reunião",
-          // Passamos dados ocultos para saber qual reunião atualizar
           "data": {
             "action": "updateMeetingDetails",
             "meetingId": selectedMeetingId
@@ -254,7 +343,6 @@ app.on("message", async (context) => {
       ]
     });
 
-    // Envia o formulário para o usuário
     let card: ActivityLike = { type: "message", attachments: [formCard] };
     await context.send(card);
     return;
@@ -271,9 +359,8 @@ app.on("message", async (context) => {
     try {
       if (novaDefinicao != undefined) {
         await context.send("Atualizando sua reunião, um momento... ⚙️");
-
-        await atualizarReuniao(graphClient, userId, meetingId, assuntoReuniao);
-
+        // userId! para garantir que não é null ou undefined
+        await atualizarReuniao(graphClient, userId!, meetingId, assuntoReuniao);
         await context.send(`A reunião foi atualizada com sucesso! ✅`);
       } else {
         await context.send("Nenhuma alteração foi fornecida.");
@@ -282,20 +369,16 @@ app.on("message", async (context) => {
       console.error("Erro ao atualizar a reunião:", error);
       await context.send("Ocorreu um erro ao tentar atualizar a reunião. Verifique o console para mais detalhes.");
     }
-
     return;
   }
 
   if (text.toLocaleLowerCase().includes("/planejar") || text.toLocaleLowerCase().includes("/planejar reunião") || text.toLocaleLowerCase().includes("/planejar reuniao")) {
     try {
-
-
       if (userId) {
         await context.send("Verificando sua agenda... 🗓️");
         const reunioes = await obterReunioesDoUsuario(graphClient, userId);
 
         if (reunioes && reunioes.length > 0) {
-          // Mapeia as reuniões para o formato do ChoiceSet
           const choices = reunioes.map((reuniao: any) => {
             return {
               title: `${reuniao.subject} (${new Date(reuniao.start.dateTime).toLocaleString()})`,
@@ -303,7 +386,6 @@ app.on("message", async (context) => {
             };
           });
 
-          // Cria o Cartão Adaptável
           const adaptiveCard = CardFactory.adaptiveCard({
             $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
             version: "1.3",
@@ -340,7 +422,7 @@ app.on("message", async (context) => {
       }
     } catch (error) {
       console.error("Erro ao processar o comando de reuniões:", error);
-      if (error.statusCode === 403 || error.code === 'Authorization_RequestDenied') {
+      if (error instanceof Error && ((error as any).statusCode === 403 || (error as any).code === 'Authorization_RequestDenied')) {
         await context.send("Ocorreu um erro. Parece que não tenho permissão para acessar calendários. Verifique se a permissão 'Calendars.Read' (de aplicativo) foi concedida no Azure AD.");
       } else {
         await context.send("Ocorreu um erro ao buscar suas reuniões. Verifique o console para mais detalhes.");
@@ -353,55 +435,187 @@ app.on("message", async (context) => {
     try {
       const meetingId = context.activity.conversation.id;
       await context.send(`Trabalhando para obter a transcrição da reunião... 📝`);
-      const transcript = await obterTranscricoesDoUsuario(graphClient, userId, meetingId);
-      const meeting = await obterReuniao(graphClient, userId, meetingId);
+      // userId! para garantir que não é null ou undefined
+      const transcript = await obterTranscricoesDoUsuario(graphClient, userId!, meetingId);
+      const meeting = await obterReuniao(graphClient, userId!, meetingId);
       let iaResponse = await sendMessage(`transcrição: ${transcript} dados da reunião: ${meeting.bodyPreview}`);
       await context.send(iaResponse);
 
     } catch (error) {
       console.error("Erro ao processar o comando de obter resultados:", error);
-      await context.send("Ocorreu um erro ao obter os resultados. Verifique o console para mais detalhes.");
+      await context.send("Ocorreu um erro ao obter os resultados. Voce deve ser o criador da reunião pra ter acesso ao resumo");
+    }
+    return;
+  }
+
+  // **NOVO**: Comando para iniciar o bot em uma reunião do Teams via Call Automation
+  if (text.toLocaleLowerCase().includes("/joinmeeting") || text.toLocaleLowerCase().includes("/entrarreuniao")) {
+    const meetingId = context.activity.conversation.id;
+    try {
+      if (!userId) {
+        await context.send("Não foi possível identificar seu usuário.");
+        return;
+      }
+
+      await context.send("Buscando link da reunião...");
+      const meetingInfo = await obterReuniao(graphClient, userId, meetingId);
+      const teamsMeetingLink = meetingInfo.onlineMeeting?.joinUrl;
+
+      if (!teamsMeetingLink) {
+        await context.send("Não foi possível encontrar o link da reunião do Teams para esta conversa.");
+        return;
+      }
+
+      const botAcsIdentity = await createAcsIdentity();
+      if (!botAcsIdentity || !botAcsIdentity.acsUserId) {
+        await context.send("Não foi possível criar/obter a identidade ACS para o bot.");
+        return;
+      }
+
+      // ✅ Locator atualizado (JoinMeetingLocator)
+      const meetingLocator = {
+        meetingLink: teamsMeetingLink
+      };
+
+      // ✅ Identificador do bot ACS
+      const caller: CommunicationUserIdentifier = {
+        communicationUserId: botAcsIdentity.acsUserId
+      };
+
+        const callInvite: CallInvite = {
+          targetParticipant: caller       // quem está chamando
+        };
+      await context.send(`Bot entrando na reunião... 🤖`);
+
+      // ✅ Novo fluxo usando createCall()
+      const createCallResult = await callAutomationClient.createCall(callInvite,callbackUrl);
+
+      // ✅ Armazenar o ID da conexão ativa
+      state.activeCallConnectionId = createCallResult.callConnectionProperties.callConnectionId;
+      storage.set(conversationId, state);
+
+      await context.send(
+        `Bot solicitou para entrar na reunião. ID da Conexão: \`${state.activeCallConnectionId}\`.\n` +
+        `Você receberá notificações quando o bot se conectar e quando a gravação iniciar/parar.`
+      );
+
+
+    } catch (error) {
+      console.error("Erro ao fazer o bot entrar na reunião do Teams via Call Automation:", error);
+      await context.send("Ocorreu um erro ao tentar fazer o bot entrar na reunião. Verifique o console para mais detalhes.");
+    }
+    return;
+  }
+
+  // **NOVO**: Comando para iniciar a gravação da reunião
+  if (text.toLocaleLowerCase().includes("/startrecording") || text.toLocaleLowerCase().includes("/iniciar_gravacao")) {
+    if (!state.activeCallConnectionId) {
+      await context.send("Nenhuma chamada ativa encontrada para iniciar a gravação. Use `/joinmeeting` primeiro.");
+      return;
+    }
+
+    try {
+      await context.send("Iniciando gravação da reunião... ⏺️");
+
+      const startRecordingResult = await callAutomationClient.getCallRecording().start({
+        callConnectionId: state.activeCallConnectionId,
+        recordingStateCallbackEndpointUrl: callbackUrl
+      });
+
+
+      if (startRecordingResult && (startRecordingResult as any).recordingId) { // Acessando recordingId como 'any' para flexibilidade
+        state.recordingId = (startRecordingResult as any).recordingId;
+        storage.set(conversationId, state);
+        await context.send(`Gravação iniciada com sucesso! ID da Gravação: \`${(startRecordingResult as any).recordingId}\``);
+      } else {
+        await context.send("Não foi possível obter um ID de gravação. A gravação pode não ter iniciado ou o resultado não contém 'recordingId'.");
+      }
+
+    } catch (error) {
+      console.error("Erro ao iniciar gravação:", error);
+      await context.send("Ocorreu um erro ao tentar iniciar a gravação. Verifique o console para mais detalhes.");
+    }
+    return;
+  }
+
+  // **NOVO**: Comando para parar a gravação da reunião
+  if (text.toLocaleLowerCase().includes("/stoprecording") || text.toLocaleLowerCase().includes("/parar_gravacao")) {
+    if (!state.recordingId) {
+      await context.send("Nenhuma gravação ativa encontrada para parar.");
+      return;
+    }
+
+    try {
+      await context.send("Parando gravação da reunião... ⏹️");
+      await callAutomationClient.getCallRecording().stop(state.recordingId);
+      state.recordingId = undefined; // Limpa o ID da gravação
+      storage.set(conversationId, state);
+      await context.send("Gravação parada com sucesso!");
+    } catch (error) {
+      console.error("Erro ao parar gravação:", error);
+      await context.send("Ocorreu um erro ao tentar parar a gravação. Verifique o console para mais detalhes.");
+    }
+    return;
+  }
+
+  // **NOVO**: Comando para desligar o bot da reunião
+  if (text.toLocaleLowerCase().includes("/hangup") || text.toLocaleLowerCase().includes("/desligar")) {
+    if (!state.activeCallConnectionId) {
+      await context.send("O bot não está em uma chamada ativa nesta conversa.");
+      return;
+    }
+
+    try {
+      await context.send("Desligando o bot da reunião... 👋");
+      const callConnection = callAutomationClient.getCallConnection(state.activeCallConnectionId);
+      await callConnection.hangUp(true);
+      state.activeCallConnectionId = undefined; // Limpa o ID da conexão
+      state.recordingId = undefined; // Limpa o ID da gravação se houver
+      storage.set(conversationId, state);
+      await context.send("Bot desligado da reunião com sucesso!");
+    } catch (error) {
+      console.error("Erro ao desligar o bot:", error);
+      await context.send("Ocorreu um erro ao tentar desligar o bot. Verifique o console para mais detalhes.");
     }
     return;
   }
 
   if (text.toLocaleLowerCase().includes("/live-helper") || text.toLocaleLowerCase().includes("/live helper")) {
     const meetingId = context.activity.conversation.id;
-    const meeting = await obterReuniao(graphClient, userId, meetingId);
+    // userId! para garantir que não é null ou undefined
+    const meeting = await obterReuniao(graphClient, userId!, meetingId);
     const participantesAtuais = meeting.attendees || [];
 
+    const botAadObjectId = "b5517749-f96f-43df-ace7-7d5334bea7d5"; // Substitua pelo AAD Object ID real do seu bot
+    const botEmail = "b5517749-f96f-43df-ace7-7d5334bea7d5@yourtenant.onmicrosoft.com"; // Substitua pelo email real do seu bot
+
     const botJaExiste = participantesAtuais.some(
-      (p: any) => p.emailAddress.address === "b5517749-f96f-43df-ace7-7d5334bea7d5"
+      (p: any) => (p.emailAddress && p.emailAddress.address === botEmail) ||
+        (p.microsoftTeamsUser && p.microsoftTeamsUser.microsoftTeamsUserId === botAadObjectId)
     );
 
     if (botJaExiste) {
-      console.log("O bot já está na lista de participantes.");
-      await context.send("O bot já estava convidado para esta reunião. ✅");
+      console.log("O bot já está na lista de participantes do evento.");
+      await context.send("O bot já estava convidado para esta reunião via Graph API. ✅");
       return;
     }
 
-    // --- PASSO 2: MODIFICAR a lista de participantes ---
     const novoParticipanteBot = {
       emailAddress: {
-        address: "b5517749-f96f-43df-ace7-7d5334bea7d5",
+        address: botEmail,
         name: "Bot de Resumo de Reuniões"
       },
       type: "required"
     };
-    
+
     const participantesAtualizados = [...participantesAtuais, novoParticipanteBot];
 
-    // --- PASSO 3: ESCREVER (PATCH) a lista atualizada ---
-    const updatePayload = {
-      attendees: participantesAtualizados
-    };
-    
-    await context.send("Convidando o bot para a reunião... 🤖");
+    await context.send("Convidando o bot para a reunião via Graph API... 🤖");
     await graphClient
-      .api(`/users/${userId}/events/${meeting.id}`)
-      .patch(updatePayload);
-      
-    await context.send("Bot adicionado com sucesso à reunião!");
+      .api(`/users/${userId!}/events/${meeting.id}`) // userId!
+      .patch({ attendees: participantesAtualizados });
+
+    await context.send("Bot adicionado com sucesso à reunião (via Graph API)! Use `/joinmeeting` para que o bot se conecte via Call Automation.");
     return;
   }
 
@@ -431,12 +645,11 @@ app.on("message", async (context) => {
     return;
   }
 
-  const state = getConversationState(activity.conversation.id);
   state.count++;
   await context.send(`[${state.count}] you said: ${text}`);
 });
 
-async function streamToString(stream) {
+async function streamToString(stream: ReadableStream<Uint8Array>) {
   const reader = stream.getReader();
   const textDecoder = new TextDecoder();
   let result = '';
@@ -452,32 +665,4 @@ async function streamToString(stream) {
   return result;
 }
 
-async function answerIncomingCall(graphClient: Client, callId: string) {
-    
-    // O endpoint público do seu Plano de Mídia, exposto via ngrok ou em produção
-    const mediaCallbackUri = "https://SEU_ENDPOINT_DE_MIDIA.com/api/media";
-
-    // O corpo da requisição para atender a chamada
-    const answerRequestBody = {
-        callbackUri: mediaCallbackUri,
-        acceptedModalities: ["audio"], // Informa que vamos lidar com áudio
-        mediaConfig: {
-            "@odata.type": "#microsoft.graph.appHostedMediaConfig",
-            "blob": "<Media session configuration blob>"
-        }
-    };
-
-    try {
-        // Envia o comando para a API do Graph
-        await graphClient
-            .api(`/communications/calls/${callId}/answer`)
-            .post(answerRequestBody);
-
-        console.log(`Chamada ${callId} atendida com sucesso!`);
-        // Agora, o stream de áudio será enviado para o seu mediaCallbackUri
-        
-    } catch (error) {
-        console.error("Erro ao atender a chamada:", error);
-    }
-}
 export default app;
