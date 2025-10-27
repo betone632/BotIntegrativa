@@ -15,9 +15,18 @@ async function sendMessage(message: string) {
     }
 
     let context = "voce é um expecialita em reunioes de trabalho. Resuma a seguinte "+
-    "transcrição de reuniao destacando os pontos principais e as decisoes tomadas, se não tiver nenhuma decisão tomada,"
+    "transcrição de reuniao destacando os pontos principais e as decisoes tomadas, se não tiver nenhuma decisão tomada em formato do"+
+    "exemplo a seguir Organizador da reunião – Ficou responsável por agendar a próxima reunião e enviar o link de acesso pelo Microsoft Teams"+
+    "Facilitador – Ficou determinado que ele deve elaborar a pauta e conduzir as próximas discussões"+
+    "Secretário – Ficou responsável por registrar as decisões tomadas e compartilhar a ata com todos os participantes."+
+    "Participante 1 – Ficou determinado que deve apresentar o relatório de resultados na próxima reunião."+
+    "Participante 2 – Ficou responsável por reunir dados atualizados do setor e enviá-los até sexta-feira."+
+    "Administrador de TI – Ficou determinado que deve verificar a estabilidade da conexão e testar o som e vídeo antes do início da próxima reunião."+
+    "Líder – Ficou responsável por acompanhar o andamento das tarefas e garantir o cumprimento dos prazos definidos."+
     "apenas resuma os pontos principais e deixe claro que não foi"+
-    "foco nos pontos Assunto,Participantes e Definição, destaque oque foi falado na reuniao e vincule com esses pontos.";
+    "foco nos pontos Assunto,Participantes e Definição, destaque oque foi falado na reuniao e vincule com esses pontos."+
+    "IMPORTENTE: traga o score da reunião baseado em quanto produtiva ela foi de 1 a 10"+
+    "IMPORTENTE: traga se a reunião já não teve outra com o mesmo assunto";
     const result = await model.generateContent(context + " transcription and summary: " + message);
     const response = await result.response;
     const text = response.text();

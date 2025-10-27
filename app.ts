@@ -24,10 +24,8 @@ if (process.env.NODE_ENV !== 'production' && !process.env.RUNNING_ON_AZURE) {
   dotenv.config({ path: "./env/.env.local" });
 }
 
-// Create storage for conversation history
 const storage = new LocalStorage();
 
-// --- INÍCIO DA SEÇÃO DE AUTENTICAÇÃO ---
 const createAuthProvider = () => {
   console.log(`${process.env.AZURE_CLIENT_ID}  ${process.env.AZURE_TENANT_ID}  ${process.env.AZURE_CLIENT_SECRET}`);
   const getAccessToken = async (): Promise<string> => {
@@ -438,7 +436,8 @@ app.on("message", async (context) => {
       // userId! para garantir que não é null ou undefined
       const transcript = await obterTranscricoesDoUsuario(graphClient, userId!, meetingId);
       const meeting = await obterReuniao(graphClient, userId!, meetingId);
-      let iaResponse = await sendMessage(`transcrição: ${transcript} dados da reunião: ${meeting.bodyPreview}`);
+      const reunioes = obterReunioesDoUsuario(graphClient, userId)
+      let iaResponse = await sendMessage(`transcrição: ${transcript} dados da reunião: ${meeting.bodyPreview} Reunioes passadas desse usuario: ${reunioes}`);
       await context.send(iaResponse);
 
     } catch (error) {
@@ -448,7 +447,6 @@ app.on("message", async (context) => {
     return;
   }
 
-  // **NOVO**: Comando para iniciar o bot em uma reunião do Teams via Call Automation
   if (text.toLocaleLowerCase().includes("/joinmeeting") || text.toLocaleLowerCase().includes("/entrarreuniao")) {
     const meetingId = context.activity.conversation.id;
     try {
@@ -639,14 +637,14 @@ app.on("message", async (context) => {
   if (text === "/runtime") {
     const runtime = {
       nodeversion: process.version,
-      sdkversion: "2.0.0", // Teams AI v2
+      sdkversion: "2.0.0",
     };
     await context.send(JSON.stringify(runtime, null, 2));
     return;
   }
 
   state.count++;
-  await context.send(`[${state.count}] you said: ${text}`);
+  await context.send(`não tenho nenhum comando: ${text}`);
 });
 
 async function streamToString(stream: ReadableStream<Uint8Array>) {
