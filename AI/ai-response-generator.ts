@@ -2,7 +2,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 // Carregue sua chave de API de uma variável de ambiente por segurança
 // ou substitua diretamente (NÃO RECOMENDADO EM PRODUÇÃO)
-const API_KEY: string = process.env.GEMINI_API_KEY || 'AIzaSyDA2m0HbmK46_C9QJog9rlOb5g2yr-Kn2g';
+const API_KEY: string = process.env.GEMINI_API_KEY || 'AIzaSyBRKHijQrr86Lph21vELVHPCfZq8sqceNU';
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 
@@ -39,6 +39,7 @@ async function sendMessage(trancript: string, meetData: string, userMeetings: st
 
 async function sendAnalises(selectedMeeting: string, reunioes: string, transcricoesPassadas: string) {
   try {
+    
     if(selectedMeeting == undefined){
       return "não foi possível obter a transcrição da reunião.";
     }
@@ -56,6 +57,8 @@ async function sendAnalises(selectedMeeting: string, reunioes: string, transcric
     return text;
   } catch (error) {
     console.error('\nErro ao se comunicar com a IA:', error);
+    
+    return "Desculpe, houve um erro ao processar as requisicões, tente novamente...";
   }
 }
 

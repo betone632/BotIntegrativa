@@ -260,7 +260,7 @@ async function obterTodasTranscricoesDoUsuario(graphClient: Client, userId: stri
 
       if (transcriptContent.getReader) {
         const transcript = await streamToString(transcriptContent);
-        let finalTranscript = `id:${onlineMeeting} transcript: ${transcript}`
+        let finalTranscript = `id:${onlineMeeting.id} subject:${onlineMeeting.subject} transcript: ${transcript}`
         trancricoes.push(finalTranscript)
       }
       else {
@@ -371,10 +371,14 @@ app.on("message", async (context) => {
 
   if (context.activity.value && context.activity.value.selectedMeeting) {
     const selectedMeetingId = context.activity.value.selectedMeeting;
+    const reuniao = await graphClient
+      .api(`/users/${userId}/events/${selectedMeetingId}`)
+      .get()
     const reunioes = await obterTodasReunioesDoUsuario(graphClient, userId);
     await context.send("analisando suas reuniões passadas, isso pode demorar um pouco...");
     const transcricoesPassadas = await obterTodasTranscricoesDoUsuario(graphClient, userId, reunioes);
-    const analis = await sendAnalises(`actual meetingId: ${selectedMeetingId}`,`usermeetings: ${JSON.stringify(reunioes)}`,`user meetings trancriprions${JSON.stringify(transcricoesPassadas)}`)
+    await context.send("dados obtidos, gerando resultados...");
+    const analis = await sendAnalises(`reuniao atual: ${JSON.stringify(reuniao)}`,`usermeetings: ${JSON.stringify(reunioes)}`,`user meetings trancriprions${JSON.stringify(transcricoesPassadas)}`)
     await context.send(analis);
     const formCard = CardFactory.adaptiveCard({
       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -513,7 +517,7 @@ app.on("message", async (context) => {
     return;
   }
 
-  if (text.toLocaleLowerCase().includes("resumir") || text.toLocaleLowerCase().includes("resumir reunião") || text.toLocaleLowerCase().includes("resumir reuniao")) {
+  if (text.toLocaleLowerCase().includes("resumo") ||text.toLocaleLowerCase().includes("resumir") || text.toLocaleLowerCase().includes("resumir reunião") || text.toLocaleLowerCase().includes("resumir reuniao")) {
     try {
       const meetingId = context.activity.conversation.id;
       await context.send(`Trabalhando para obter a transcrição da reunião... 📝`);
