@@ -11,7 +11,7 @@ import {
 
 import config from "./config";
 import createAcsIdentity from "./callIdBotgenerator";
-import sendMessage from "./AI/ai-response-generator";
+import { sendMessage, sendAnalises } from "./AI/ai-response-generator";
 import { ManagedIdentityCredential, ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
 const { CardFactory } = require('botbuilder');
@@ -93,6 +93,20 @@ async function obterReunioesDoUsuario(graphClient: Client, userId: string) {
       .filter(`start/dateTime ge '${dataInicio}' and end/dateTime le '${dataFimISO}'`)
       .orderby("start/dateTime ASC")
       .top(10)
+      .get();
+
+    return eventos.value;
+  } catch (error) {
+    console.error("Erro ao obter as reuniões do usuário:", error);
+    throw error;
+  }
+}
+
+async function obterTodasReunioesDoUsuario(graphClient: Client, userId: string) {
+  try {
+    const eventos = await graphClient
+      .api(`/users/${userId}/events`)
+      .orderby("start/dateTime ASC")
       .get();
 
     return eventos.value;
@@ -207,6 +221,61 @@ async function obterTranscricoesDoUsuario(graphClient: Client, userId: string, m
   }
 }
 
+async function obterTodasTranscricoesDoUsuario(graphClient: Client, userId: string, reunioes: Object[]) {
+  try {
+
+    let trancricoes = []
+
+    for (let i = 0; i < reunioes.length; i++) {
+      if(!reunioes[i]["onlineMeeting"])
+        continue
+
+      let joinUrl = reunioes[i]["onlineMeeting"]["joinUrl"]
+      if(!joinUrl)
+        continue;
+
+      const encodedJoinWebUrl = encodeURIComponent(joinUrl);
+
+      const meeting = await graphClient
+        .api(`/users/${userId}/onlineMeetings?$filter=JoinWebUrl eq '${encodedJoinWebUrl}'`)
+        .get();
+
+      const onlineMeeting = meeting.value[0];
+      const graphMeetingId = onlineMeeting.id;
+
+      const transcriptsResponse = await graphClient
+        .api(`/users/${userId}/onlineMeetings/${graphMeetingId}/transcripts`)
+        .get();
+
+      if (!transcriptsResponse.value || transcriptsResponse.value.length === 0) {
+        trancricoes.push(`Reunião encontrada (ID: ${graphMeetingId}), mas não há transcrições disponíveis.`);
+        continue;
+      }
+
+      const transcriptId = transcriptsResponse.value[0].id;
+
+      const transcriptContent = await graphClient
+        .api(`/users/${userId}/onlineMeetings/${graphMeetingId}/transcripts/${transcriptId}/content?$format=text/vtt`)
+        .get();
+
+      if (transcriptContent.getReader) {
+        const transcript = await streamToString(transcriptContent);
+        let finalTranscript = `id:${onlineMeeting} transcript: ${transcript}`
+        trancricoes.push(finalTranscript)
+      }
+      else {
+        trancricoes.push(`Não foi possível obter a transcrição como stream.`);
+        continue;
+      }
+    }
+    return trancricoes
+
+  } catch (error) {
+    console.error("Erro ao obter as reuniões do usuário:", error);
+    throw error;
+  }
+}
+
 const connectionString = process.env.COMMUNICATION_SERVICES_CONNECTION_STRING;
 if (!connectionString) {
   console.error("COMMUNICATION_SERVICES_CONNECTION_STRING não está configurada.");
@@ -302,11 +371,23 @@ app.on("message", async (context) => {
 
   if (context.activity.value && context.activity.value.selectedMeeting) {
     const selectedMeetingId = context.activity.value.selectedMeeting;
+    const reunioes = await obterTodasReunioesDoUsuario(graphClient, userId);
+    await context.send("analisando suas reuniões passadas, isso pode demorar um pouco...");
+    const transcricoesPassadas = await obterTodasTranscricoesDoUsuario(graphClient, userId, reunioes);
+    const analis = await sendAnalises(`actual meetingId: ${selectedMeetingId}`,`usermeetings: ${JSON.stringify(reunioes)}`,`user meetings trancriprions${JSON.stringify(transcricoesPassadas)}`)
+    await context.send(analis);
     const formCard = CardFactory.adaptiveCard({
       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
       "version": "1.3",
       "type": "AdaptiveCard",
       "body": [
+        {
+          "type": "TextBlock",
+          "text": "Se puder, adicione mais detalhes da reunião",
+          "wrap": true,
+          "size": "Medium",
+          "weight": "Bolder"
+        },
         {
           "type": "Input.Text",
           "label": "Qual o objetivo da reunião?",
@@ -370,7 +451,10 @@ app.on("message", async (context) => {
     return;
   }
 
-  if (text.toLocaleLowerCase().includes("/planejar") || text.toLocaleLowerCase().includes("/planejar reunião") || text.toLocaleLowerCase().includes("/planejar reuniao")) {
+  if (text.toLocaleLowerCase().includes("planejar") 
+    || text.toLocaleLowerCase().includes("planejar reunião") 
+    || text.toLocaleLowerCase().includes("planejar reuniao")
+    || text.toLocaleLowerCase().includes("planeje")) {
     try {
       if (userId) {
         await context.send("Verificando sua agenda... 🗓️");
@@ -405,7 +489,7 @@ app.on("message", async (context) => {
             actions: [
               {
                 type: "Action.Submit",
-                title: "Planejar",
+                title: "Analisar",
               },
             ],
           });
@@ -429,15 +513,17 @@ app.on("message", async (context) => {
     return;
   }
 
-  if (text.toLocaleLowerCase().includes("/resumir") || text.toLocaleLowerCase().includes("/resumir reunião") || text.toLocaleLowerCase().includes("/resumir reuniao")) {
+  if (text.toLocaleLowerCase().includes("resumir") || text.toLocaleLowerCase().includes("resumir reunião") || text.toLocaleLowerCase().includes("resumir reuniao")) {
     try {
       const meetingId = context.activity.conversation.id;
       await context.send(`Trabalhando para obter a transcrição da reunião... 📝`);
-      // userId! para garantir que não é null ou undefined
       const transcript = await obterTranscricoesDoUsuario(graphClient, userId!, meetingId);
+      await context.send(`Trabalhando para obter os dados das reuniões anteriores... 💼`);
       const meeting = await obterReuniao(graphClient, userId!, meetingId);
-      const reunioes = obterReunioesDoUsuario(graphClient, userId)
-      let iaResponse = await sendMessage(`transcrição: ${transcript} dados da reunião: ${meeting.bodyPreview} Reunioes passadas desse usuario: ${reunioes}`);
+      const reunioes = await obterTodasReunioesDoUsuario(graphClient, userId);
+      await context.send(`Analisando as transcrições ... 🔎`);
+      const transcricoesPassadas = await obterTodasTranscricoesDoUsuario(graphClient, userId, reunioes);
+      let iaResponse = await sendMessage(`transcrição: ${transcript}`, `dados da reunião: ${meeting.bodyPreview}`, `Reunioes passadas desse usuario: ${JSON.stringify(reunioes)}`,`transcricoes passadas: ${JSON.stringify(transcricoesPassadas)}`);
       await context.send(iaResponse);
 
     } catch (error) {
@@ -480,13 +566,13 @@ app.on("message", async (context) => {
         communicationUserId: botAcsIdentity.acsUserId
       };
 
-        const callInvite: CallInvite = {
-          targetParticipant: caller       // quem está chamando
-        };
+      const callInvite: CallInvite = {
+        targetParticipant: caller       // quem está chamando
+      };
       await context.send(`Bot entrando na reunião... 🤖`);
 
       // ✅ Novo fluxo usando createCall()
-      const createCallResult = await callAutomationClient.createCall(callInvite,callbackUrl);
+      const createCallResult = await callAutomationClient.createCall(callInvite, callbackUrl);
 
       // ✅ Armazenar o ID da conexão ativa
       state.activeCallConnectionId = createCallResult.callConnectionProperties.callConnectionId;

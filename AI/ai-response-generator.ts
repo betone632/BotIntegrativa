@@ -8,13 +8,14 @@ const genAI = new GoogleGenerativeAI(API_KEY);
 
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-async function sendMessage(message: string) {
+async function sendMessage(trancript: string, meetData: string, userMeetings: string, transcricoesPassadas: string) {
   try {
-    if(message.includes("mas não há transcrições disponíveis.")){
+    if(trancript.includes("mas não há transcrições disponíveis.")){
       return "não foi possível obter a transcrição da reunião.";
     }
 
-    let context = "voce é um expecialita em reunioes de trabalho. Resuma a seguinte "+
+    let comand = "voce é um expecialista em reunioes de trabalho. na resposta oculte detalhes sobre isso, "+
+    "oculte id de reuniao, ou outros dados senseiveis na sua resposta. Resuma a seguinte "+
     "transcrição de reuniao destacando os pontos principais e as decisoes tomadas, se não tiver nenhuma decisão tomada em formato do"+
     "exemplo a seguir Organizador da reunião – Ficou responsável por agendar a próxima reunião e enviar o link de acesso pelo Microsoft Teams"+
     "Facilitador – Ficou determinado que ele deve elaborar a pauta e conduzir as próximas discussões"+
@@ -27,7 +28,29 @@ async function sendMessage(message: string) {
     "foco nos pontos Assunto,Participantes e Definição, destaque oque foi falado na reuniao e vincule com esses pontos."+
     "IMPORTENTE: traga o score da reunião baseado em quanto produtiva ela foi de 1 a 10"+
     "IMPORTENTE: traga se a reunião já não teve outra com o mesmo assunto";
-    const result = await model.generateContent(context + " transcription and summary: " + message);
+    const result = await model.generateContent(`${comand}  contex:  ${trancript} \r\n ${meetData} \r\n ${userMeetings} \r\n ${userMeetings} \r\n ${transcricoesPassadas}`);
+    const response = await result.response;
+    const text = response.text();
+    return text;
+  } catch (error) {
+    console.error('\nErro ao se comunicar com a IA:', error);
+  }
+}
+
+async function sendAnalises(selectedMeeting: string, reunioes: string, transcricoesPassadas: string) {
+  try {
+    if(selectedMeeting == undefined){
+      return "não foi possível obter a transcrição da reunião.";
+    }
+
+    let comand = "voce é um auxiliar de gestor útil. na resposta oculte detalhes sobre isso, "+
+    "oculte id de reuniao, ou outros dados sensiveis na sua resposta. Resuma a seguinte "+
+    "voce deve analisar a reuniao atual do usuario, as outras reunioes e suas transcricoes, trazer todas as informacoes possiveis que"+
+    "batam com a reuniao atual, se nao tiver apenas diga que nao tem, como definicoes em reunioes antigas, quantas vezes essa reuniao foi feito"+
+    "se alguma reuniao parecida já aconteceu"+
+    "NAO TRAGA INFORMACOES sobre outras transcrições que nao sejam revelevantes para a reunião atual"+
+    "NAO TRAGA INFORMACOES se forem irrelevantes como quem é o organizador, contéudo, traga apenas se tiverem peso sobre assunto"
+    const result = await model.generateContent(`${comand}  contex:  ${selectedMeeting} \r\n ${reunioes}  \r\n ${transcricoesPassadas}`);
     const response = await result.response;
     const text = response.text();
     return text;
@@ -37,4 +60,4 @@ async function sendMessage(message: string) {
 }
 
 
-export default sendMessage;
+export {sendMessage, sendAnalises};
